@@ -95,17 +95,23 @@ async def update_public_leaderboard():
     if not isinstance(channel, discord.abc.Messageable):
         return
 
+    guild = getattr(channel, "guild", None)
+
     # Fetch top users
     top_users = await db.get_leaderboard(10)
     if not top_users:
         return
 
-    # Create embed with Trophy Cabinet style
+    # Create rich embed (match "new book uploaded" style)
     embed = discord.Embed(
-        title="🏆 VAAHAKA CREDITS 🏆",
-        description="Top Contributors",
-        color=discord.Color.gold(),
+        title="🏆 LEADERBOARD UPDATED!",
+        description="Top contributors right now:",
+        color=discord.Color.green(),
+        timestamp=discord.utils.utcnow(),
     )
+
+    if guild and guild.icon:
+        embed.set_thumbnail(url=guild.icon.url)
 
     medals = ["🥇", "🥈", "🥉"]
     leaderboard_text = ""
@@ -123,12 +129,17 @@ async def update_public_leaderboard():
         else:
             medal = f"**{idx}.**"
 
-        leaderboard_text += f"{medal} **{user_name}** = {points:,} CREDITS\n"
+        leaderboard_text += f"{medal} **{user_name}** = **{points:,}** credits\n"
 
-    embed.description = leaderboard_text
-    embed.set_footer(
-        text=f"Last Updated: {discord.utils.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
-    )
+    embed.add_field(name="🏅 Top 10", value=leaderboard_text, inline=False)
+
+    if guild and guild.icon:
+        embed.set_footer(
+            text="Vaahaka Credits • Auto-updated leaderboard",
+            icon_url=guild.icon.url,
+        )
+    else:
+        embed.set_footer(text="Vaahaka Credits • Auto-updated leaderboard")
 
     await channel.send(embed=embed)
 
@@ -223,7 +234,7 @@ async def stats(interaction: discord.Interaction):
     if not result:
         await interaction.response.send_message(
             "You haven't uploaded any PDFs yet! Upload a PDF to earn credits.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
 
@@ -248,7 +259,7 @@ async def stats(interaction: discord.Interaction):
             books_list += f"\n... and {len(books) - 10} more"
         embed.add_field(name="📚 Your Uploads", value=books_list, inline=False)
 
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed, ephemeral=False)
 
 
 @bot.tree.command(name="leaderboard", description="View the top contributors")
@@ -263,12 +274,16 @@ async def leaderboard(interaction: discord.Interaction):
         )
         return
 
-    # Create embed with Trophy Cabinet style
+    # Create rich embed (match "new book uploaded" style)
     embed = discord.Embed(
-        title="🏆 VAAHAKA CREDITS 🏆",
-        description="Top Contributors",
-        color=discord.Color.gold(),
+        title="🏆 LEADERBOARD",
+        description=f"Requested by **{interaction.user.display_name}**",
+        color=discord.Color.green(),
+        timestamp=discord.utils.utcnow(),
     )
+
+    if interaction.guild and interaction.guild.icon:
+        embed.set_thumbnail(url=interaction.guild.icon.url)
 
     medals = ["🥇", "🥈", "🥉"]
     leaderboard_text = ""
@@ -290,9 +305,14 @@ async def leaderboard(interaction: discord.Interaction):
         else:
             medal = f"**{idx}.**"
 
-        leaderboard_text += f"{medal} **{user_name}** = {points:,} CREDITS\n"
+        leaderboard_text += f"{medal} **{user_name}** = **{points:,}** credits\n"
 
-    embed.description = leaderboard_text
+    embed.add_field(name="🏅 Top 10", value=leaderboard_text, inline=False)
+
+    embed.set_footer(
+        text=f"Requested by {interaction.user.name}",
+        icon_url=interaction.user.display_avatar.url,
+    )
 
     await interaction.response.send_message(embed=embed)
 
@@ -300,12 +320,13 @@ async def leaderboard(interaction: discord.Interaction):
 class AllTimeView(View):
     """Pagination view for all-time rankings."""
 
-    def __init__(self, all_users, current_page=0, per_page=20):
+    def __init__(self, all_users, current_page=0, per_page=20, guild_icon_url=None):
         super().__init__(timeout=180)
         self.all_users = all_users
         self.current_page = current_page
         self.per_page = per_page
         self.total_pages = math.ceil(len(all_users) / per_page)
+        self.guild_icon_url = guild_icon_url
 
         # Update button states
         self.update_buttons()
@@ -342,9 +363,28 @@ class AllTimeView(View):
         page_users = self.all_users[start_idx:end_idx]
 
         embed = discord.Embed(
-            title="📊 ALL-TIME RANKINGS 📊",
-            description=f"Complete ranking of all {len(self.all_users)} contributors",
-            color=discord.Color.blue(),
+            title="📊 ALL-TIME RANKINGS",
+            description="Complete ranking of all contributors",
+            color=discord.Color.green(),
+            timestamp=discord.utils.utcnow(),
+        )
+
+        icon_url = self.guild_icon_url
+        if not icon_url and bot.user:
+            icon_url = bot.user.display_avatar.url
+
+        if icon_url:
+            embed.set_thumbnail(url=icon_url)
+
+        embed.add_field(
+            name="👥 Total Contributors",
+            value=f"**{len(self.all_users)}**",
+            inline=True,
+        )
+        embed.add_field(
+            name="📄 Page",
+            value=f"**{self.current_page + 1}/{self.total_pages}**",
+            inline=True,
         )
 
         medals = ["🥇", "🥈", "🥉"]
@@ -363,12 +403,17 @@ class AllTimeView(View):
             else:
                 medal = f"**{idx}.**"
 
-            ranking_text += f"{medal} **{user_name}** = {points:,} CREDITS\n"
+            ranking_text += f"{medal} **{user_name}** = **{points:,}** credits\n"
 
-        embed.description = ranking_text
-        embed.set_footer(
-            text=f"Page {self.current_page + 1}/{self.total_pages} • Total Users: {len(self.all_users)}"
-        )
+        # Use description (4096 chars) instead of a field value (1024 chars) to avoid field-length limits.
+        embed.description = f"Complete ranking of all contributors\n\n{ranking_text}"
+        if icon_url:
+            embed.set_footer(
+                text="Vaahaka Credits • Use the buttons to navigate pages",
+                icon_url=icon_url,
+            )
+        else:
+            embed.set_footer(text="Vaahaka Credits • Use the buttons to navigate pages")
 
         return embed
 
@@ -402,7 +447,11 @@ async def alltime(interaction: discord.Interaction):
         return
 
     # Create pagination view
-    view = AllTimeView(all_users)
+    guild_icon_url = None
+    if interaction.guild and interaction.guild.icon:
+        guild_icon_url = interaction.guild.icon.url
+
+    view = AllTimeView(all_users, guild_icon_url=guild_icon_url)
     embed = await view.get_embed()
 
     await interaction.response.send_message(embed=embed, view=view)
@@ -439,11 +488,11 @@ async def set_leaderboard_channel_error(interaction: discord.Interaction, error)
 
 
 @bot.tree.command(
-    name="run_leaderboard_lister",
+    name="run_leaderboard_listner",
     description="Scan channel history for existing PDFs (Admin only)",
 )
 @app_commands.check(admin_only_or_dev)
-async def run_leaderboard_lister(interaction: discord.Interaction):
+async def run_leaderboard_listner(interaction: discord.Interaction):
     """Scan channel history to find and process all existing PDFs."""
     await interaction.response.defer(ephemeral=True)
 
@@ -535,9 +584,9 @@ async def run_leaderboard_lister(interaction: discord.Interaction):
         await interaction.followup.send(f"❌ Error during scan: {e}")
 
 
-@run_leaderboard_lister.error
-async def run_leaderboard_lister_error(interaction: discord.Interaction, error):
-    """Handle permission/check errors for run_leaderboard_lister command."""
+@run_leaderboard_listner.error
+async def run_leaderboard_listner_error(interaction: discord.Interaction, error):
+    """Handle permission/check errors for run_leaderboard_listner command."""
     if isinstance(
         error,
         (

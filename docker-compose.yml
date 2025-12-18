@@ -1,0 +1,29 @@
+services:
+  vaahaka-credits-bot:
+    container_name: vaahaka-credits-bot
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+
+    # Non-Swarm limits (enforced by docker compose)
+    cpus: "1.0"
+    mem_limit: 500M
+
+    # Swarm-mode limits (ignored by plain docker compose, kept for compatibility)
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 500M
+
+    # Load DISCORD_TOKEN, GUILD_ID, DEV_MODE, etc. from a local .env file
+    env_file:
+      - .env
+
+    # Persist SQLite DB in a writable bind mount (recommended on Docker Desktop / Windows)
+    environment:
+      DB_PATH: /data/vaahaka_credits.db
+
+    volumes:
+      - ./data:/data

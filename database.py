@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 from typing import List, Optional, Tuple
 
@@ -5,7 +6,9 @@ import aiosqlite
 
 
 class Database:
-    def __init__(self, db_path: str = "vaahaka_credits.db"):
+    def __init__(self, db_path: Optional[str] = None):
+        if db_path is None:
+            db_path = os.getenv("DB_PATH", "vaahaka_credits.db")
         self.db_path = db_path
 
     async def init_db(self):

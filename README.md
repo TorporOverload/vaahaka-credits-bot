@@ -17,11 +17,11 @@ A Discord bot that rewards users with credits for uploading PDF documents. Each 
 
 ## Commands
 
-- `/stats` - View your personal credits, rank, and list of uploaded books (ephemeral)
+- `/stats` - View your personal credits, rank, and list of uploaded books (public)
 - `/leaderboard` - Display the top 10 contributors with trophy cabinet style
 - `/alltime` - View complete all-time rankings of all contributors (paginated)
 - `/set_leaderboard_channel` - Set the channel for automatic leaderboard updates and upload notifications (Admin only)
-- `/run_leaderboard_lister` - Scan channel history for existing PDFs (Admin only)
+- `/run_leaderboard_listner` - Scan channel history for existing PDFs (Admin only)
 
 ## Setup
 
@@ -35,17 +35,14 @@ A Discord bot that rewards users with credits for uploading PDF documents. Each 
 
 1. Clone this repository:
 ```bash
-git clone <repository-url>
+git clone https://github.com/TorporOverload/vaahaka-credits-bot
 cd vaahaka_credits_bot
 ```
 
 2. Install dependencies using uv or pip:
 ```bash
 # Using uv (recommended)
-uv pip install -e .
-
-# Or using pip
-pip install -e .
+uv sync
 ```
 
 3. Create a `.env` file in the project root:
@@ -61,6 +58,43 @@ GUILD_ID=your_guild_id_here
 # Dev mode: when enabled, anyone can run admin-only commands (DO NOT use in production)
 DEV_MODE=0
 ```
+
+### Docker (Docker Compose)
+
+#### Prerequisites
+- Docker + Docker Compose (Compose v2 recommended)
+
+#### Run with Docker Compose
+1. Create your `.env` file (same as above) and set at least `DISCORD_TOKEN` (and optionally `GUILD_ID`, `DEV_MODE`, etc).
+2. Create a local data directory (used to persist the SQLite DB):
+```bash
+mkdir -p data
+```
+PowerShell:
+```bash
+New-Item -ItemType Directory -Force data | Out-Null
+```
+3. Build and start the bot:
+```bash
+docker compose up -d --build
+```
+4. View logs:
+```bash
+docker compose logs -f
+```
+5. Stop:
+```bash
+docker compose down
+```
+
+#### Data persistence (SQLite)
+The bot uses SQLite. With Docker Compose, the database is persisted via a bind mount:
+- container: `/data/vaahaka_credits.db`
+- host: `./data/vaahaka_credits.db`
+
+If you see `sqlite3.OperationalError: unable to open database file`, it usually means `./data` doesn’t exist or isn’t writable by Docker—create the folder and try again.
+
+To delete the database data, stop the container and remove the `./data` directory.
 
 To enable dev mode, set `DEV_MODE=1` (or `true` / `yes` / `on`). When enabled, the bot bypasses administrator permission checks for admin-only slash commands.
 
