@@ -21,7 +21,25 @@ A Discord bot that rewards users with credits for uploading PDF documents. Each 
 - `/leaderboard` - Display the top 10 contributors with trophy cabinet style
 - `/alltime` - View complete all-time rankings of all contributors (paginated)
 - `/set_leaderboard_channel` - Set the channel for automatic leaderboard updates and upload notifications (Admin only)
-- `/run_leaderboard_listner` - Scan channel history for existing PDFs (Admin only)
+- `/run_leaderboard_listner` - Scan channel history for existing PDFs (Admin only; auto-adds the current channel to the PDF listen allowlist)
+- `/listen_add channel:#channel` - Add a channel to the PDF listen allowlist (Admin only)
+- `/listen_remove channel:#channel` - Remove a channel from the PDF listen allowlist (Admin only)
+- `/listen_list` - Show configured PDF listen channels (Admin only)
+- `/listen_clear` - Clear all configured PDF listen channels (revert to listening in no channels) (Admin only)
+
+### Channel listening configuration (persistent)
+The bot processes PDF uploads only in channels you explicitly configure using a **persisted channel allowlist** stored in the SQLite database.
+
+Behavior:
+- If **no channels are configured** for your server, the bot listens for PDFs in **no channels** (default).
+- If **one or more channels are configured**, the bot will **only** process PDFs uploaded in those channels.
+- Running `/run_leaderboard_listner` in a channel will automatically add that channel to the allowlist (so future uploads there are processed).
+
+Admin commands:
+- `/listen_add channel:#channel` - Add a channel to the allowlist (enables processing in that channel)
+- `/listen_remove channel:#channel` - Remove a channel from the allowlist
+- `/listen_list` - Show configured channels
+- `/listen_clear` - Clear the allowlist (reverts to listening in no channels)
 
 ## Setup
 
@@ -180,7 +198,7 @@ The bot uses SQLite with three tables:
 
 ## How It Works
 
-1. **Real-time Monitoring**: The bot listens to all messages in channels where it has access
+1. **Real-time Monitoring**: By default, the bot listens for PDF uploads in **no channels**. After you configure one or more listen channels, it will only process PDFs in those channels.
 2. **PDF Detection**: When a PDF is uploaded, the bot downloads and processes it
 3. **Hash Calculation**: A SHA-256 hash is calculated to detect duplicates
 4. **Page Counting**: pypdf extracts the page count from the PDF

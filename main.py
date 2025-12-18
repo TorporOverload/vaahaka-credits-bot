@@ -1,5 +1,6 @@
 import math
 import os
+from typing import Dict, Set
 
 import discord
 from discord import app_commands
@@ -28,6 +29,12 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 db = Database()
 pdf_processor = PDFProcessor()
 
+# In-memory cache of configured "listen" channels (persisted in SQLite).
+# Behavior:
+# - If a guild has NO configured channels, the bot listens in NO channels (default).
+# - If a guild has >=1 configured channel, the bot only processes PDFs in those channels.
+LISTEN_CHANNELS_BY_GUILD: Dict[int, Set[int]] = {}
+
 
 def admin_only_or_dev(interaction: discord.Interaction) -> bool:
     """Allow everyone in DEV_MODE; otherwise require administrator permissions."""
@@ -36,6 +43,46 @@ def admin_only_or_dev(interaction: discord.Interaction) -> bool:
 
     perms = getattr(getattr(interaction, "user", None), "guild_permissions", None)
     return bool(getattr(perms, "administrator", False))
+
+
+async def load_listen_channels():
+    """Load configured listen channels into memory (persisted in SQLite)."""
+    global LISTEN_CHANNELS_BY_GUILD
+    LISTEN_CHANNELS_BY_GUILD = {}
+
+    # We only know the guilds the bot is currently in; load per guild.
+    for guild in bot.guilds:
+        channels = set(await db.get_listened_channels(int(guild.id)))
+        if channels:
+            LISTEN_CHANNELS_BY_GUILD[int(guild.id)] = channels
+
+
+async def refresh_guild_listen_channels(guild_id: int):
+    """Reload listen channels for a single guild into memory from SQLite."""
+    channels = set(await db.get_listened_channels(int(guild_id)))
+    if channels:
+        LISTEN_CHANNELS_BY_GUILD[int(guild_id)] = channels
+    else:
+        # If none configured, remove the key so we default back to "listen nowhere"
+        LISTEN_CHANNELS_BY_GUILD.pop(int(guild_id), None)
+
+
+async def add_listen_channel(guild_id: int, channel_id: int):
+    """Persist a channel in the listen list."""
+    await db.add_listened_channel(int(guild_id), int(channel_id))
+    await refresh_guild_listen_channels(guild_id)
+
+
+async def remove_listen_channel(guild_id: int, channel_id: int):
+    """Remove a channel from the persisted listen list."""
+    await db.remove_listened_channel(int(guild_id), int(channel_id))
+    await refresh_guild_listen_channels(guild_id)
+
+
+async def clear_listen_channels(guild_id: int):
+    """Clear all persisted listen channels for a guild."""
+    await db.clear_listened_channels(int(guild_id))
+    await refresh_guild_listen_channels(guild_id)
 
 
 async def send_upload_notification(user: discord.User, file_name: str, page_count: int):
@@ -150,6 +197,10 @@ async def on_ready():
     print(f"{bot.user} has connected to Discord!")
     await db.init_db()
 
+    # Load persisted listen-channel configuration on startup
+    await load_listen_channels()
+    print(f"Loaded listen-channel config for {len(LISTEN_CHANNELS_BY_GUILD)} guild(s).")
+
     # Sync commands to guild
     if GUILD_ID:
         guild = discord.Object(id=int(GUILD_ID))
@@ -170,6 +221,24 @@ async def on_message(message):
 
     # Process commands first
     await bot.process_commands(message)
+
+    # Do not process PDF uploads in DMs.
+    # (Listen-channels are a server concept; DM uploads should never be processed.)
+    if message.guild is None:
+        return
+
+    # If listen channels are configured for this guild, only process PDFs in those channels.
+    # If none configured, listen in NO channels by default.
+    if message.guild is not None:
+        guild_id = int(message.guild.id)
+        configured = LISTEN_CHANNELS_BY_GUILD.get(guild_id, set())
+
+        # Default: do not process PDFs anywhere until at least one channel is configured.
+        if not configured:
+            return
+
+        if int(message.channel.id) not in configured:
+            return
 
     # Check for PDF attachments
     for attachment in message.attachments:
@@ -458,6 +527,101 @@ async def alltime(interaction: discord.Interaction):
 
 
 @bot.tree.command(
+    name="listen_add",
+    description="Add a channel to the PDF listen list (Admin only)",
+)
+@app_commands.check(admin_only_or_dev)
+async def listen_add(interaction: discord.Interaction, channel: discord.TextChannel):
+    """Add a channel to the persisted listen list for this server."""
+    if not interaction.guild:
+        await interaction.response.send_message(
+            "❌ This command can only be used in a server.", ephemeral=True
+        )
+        return
+
+    await add_listen_channel(interaction.guild.id, channel.id)
+    await interaction.response.send_message(
+        f"✅ Now listening for PDFs in {channel.mention}.\n"
+        "ℹ️ Default is **listen nowhere**. Once you add at least one channel, the bot will only process PDFs in configured channels.",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(
+    name="listen_remove",
+    description="Remove a channel from the PDF listen list (Admin only)",
+)
+@app_commands.check(admin_only_or_dev)
+async def listen_remove(interaction: discord.Interaction, channel: discord.TextChannel):
+    """Remove a channel from the persisted listen list for this server."""
+    if not interaction.guild:
+        await interaction.response.send_message(
+            "❌ This command can only be used in a server.", ephemeral=True
+        )
+        return
+
+    await remove_listen_channel(interaction.guild.id, channel.id)
+    await interaction.response.send_message(
+        f"✅ Removed {channel.mention} from listen channels.\n"
+        "ℹ️ If no channels remain configured, the bot will listen in **no channels** until you add one with `/listen_add`.",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(
+    name="listen_list",
+    description="Show configured PDF listen channels (Admin only)",
+)
+@app_commands.check(admin_only_or_dev)
+async def listen_list(interaction: discord.Interaction):
+    """List configured listen channels for this server."""
+    if not interaction.guild:
+        await interaction.response.send_message(
+            "❌ This command can only be used in a server.", ephemeral=True
+        )
+        return
+
+    guild_id = int(interaction.guild.id)
+    configured = sorted(LISTEN_CHANNELS_BY_GUILD.get(guild_id, set()))
+
+    if not configured:
+        await interaction.response.send_message(
+            "ℹ️ No listen channels configured.\n"
+            "⛔ Bot is currently listening in **no channels** by default.\n\n"
+            "Use `/listen_add` to start listening in a specific channel.",
+            ephemeral=True,
+        )
+        return
+
+    channels_text = "\n".join([f"• <#{cid}>" for cid in configured])
+    await interaction.response.send_message(
+        "✅ Currently listening for PDFs in:\n" + channels_text,
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(
+    name="listen_clear",
+    description="Clear all configured PDF listen channels (Admin only)",
+)
+@app_commands.check(admin_only_or_dev)
+async def listen_clear(interaction: discord.Interaction):
+    """Clear listen channel configuration for this server (reverts to listening everywhere)."""
+    if not interaction.guild:
+        await interaction.response.send_message(
+            "❌ This command can only be used in a server.", ephemeral=True
+        )
+        return
+
+    await clear_listen_channels(interaction.guild.id)
+    await interaction.response.send_message(
+        "✅ Cleared listen channels.\n"
+        "⛔ Bot is now listening in **no channels** by default.",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(
     name="set_leaderboard_channel",
     description="Set the channel for automatic leaderboard updates (Admin only)",
 )
@@ -505,13 +669,26 @@ async def run_leaderboard_listner(interaction: discord.Interaction):
         )
         return
 
+    channel_mention = (
+        getattr(channel, "mention", None)
+        or f"`{getattr(channel, 'name', 'this channel')}`"
+    )
+
+    added_line = ""
+    # Auto-add the current channel to the listen allowlist so future PDF uploads here are processed.
+    if interaction.guild:
+        await add_listen_channel(interaction.guild.id, channel.id)
+        added_line = f"✅ This channel ({channel_mention}) has been added to the PDF listen allowlist for future uploads.\n"
+
     processed_count = 0
     duplicate_count = 0
     error_count = 0
     scanned_messages = 0
 
     await interaction.followup.send(
-        "🔍 Starting historical scan... This may take a while. I'll report back when finished."
+        "🔍 Starting historical scan... This may take a while.\n"
+        + added_line
+        + "I'll report back when finished."
     )
 
     try:

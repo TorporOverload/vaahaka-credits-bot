@@ -43,10 +43,25 @@ class Database:
                 )
             """)
 
-            # Create index for faster queries
+            # Listened channels table stores which channels the bot should monitor for PDFs
+            # (persisted across restarts)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS listened_channels (
+                    guild_id INTEGER NOT NULL,
+                    channel_id INTEGER NOT NULL,
+                    added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (guild_id, channel_id)
+                )
+            """)
+
+            # Create indexes for faster queries
             await db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_user_uploads
                 ON uploads(user_id)
+            """)
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_listened_channels_guild
+                ON listened_channels(guild_id)
             """)
 
             await db.commit()
@@ -179,3 +194,73 @@ class Database:
             ) as cursor:
                 row = await cursor.fetchone()
                 return int(row[0]) if row else None
+
+    async def add_listened_channel(self, guild_id: int, channel_id: int) -> None:
+        """Persist a channel ID that the bot should listen to for PDF uploads."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                INSERT OR IGNORE INTO listened_channels (guild_id, channel_id)
+                VALUES (?, ?)
+                """,
+                (guild_id, channel_id),
+            )
+            await db.commit()
+
+    async def remove_listened_channel(self, guild_id: int, channel_id: int) -> None:
+        """Remove a channel from the persisted listen list."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                DELETE FROM listened_channels
+                WHERE guild_id = ? AND channel_id = ?
+                """,
+                (guild_id, channel_id),
+            )
+            await db.commit()
+
+    async def clear_listened_channels(self, guild_id: int) -> None:
+        """Clear all listened channels for a guild."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                DELETE FROM listened_channels
+                WHERE guild_id = ?
+                """,
+                (guild_id,),
+            )
+            await db.commit()
+
+    async def get_listened_channels(self, guild_id: int) -> List[int]:
+        """
+        Get the persisted list of listened channels for a guild.
+
+        Returns a list of channel IDs. If empty, it means "no configured channels".
+        (Your bot logic can decide whether empty means listen-to-all or listen-to-none.)
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                """
+                SELECT channel_id
+                FROM listened_channels
+                WHERE guild_id = ?
+                ORDER BY added_at ASC
+                """,
+                (guild_id,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [int(row[0]) for row in rows]
+
+    async def is_channel_listened(self, guild_id: int, channel_id: int) -> bool:
+        """Check if a channel is in the persisted listen list for a guild."""
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                """
+                SELECT 1
+                FROM listened_channels
+                WHERE guild_id = ? AND channel_id = ?
+                LIMIT 1
+                """,
+                (guild_id, channel_id),
+            ) as cursor:
+                return await cursor.fetchone() is not None
