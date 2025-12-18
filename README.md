@@ -2,6 +2,12 @@
 
 A Discord bot that rewards users with credits for uploading PDF documents. Each page in a PDF equals one credit, encouraging knowledge sharing and content contribution.
 
+## Disclaimer (Use at Your Own Risk)
+
+This bot is provided **as-is**, without warranty of any kind. **You are solely responsible** for how you deploy, configure, and use it.
+
+By using this bot, you agree that the author/maintainer will **not be responsible or liable** for any issues, losses, damages, bans, data loss, or other consequences caused by this bot or by your use/misuse of it. **Use at your own risk.**
+
 ## Features
 
 - **Automatic PDF Detection**: Monitors channels for PDF uploads and automatically awards credits
